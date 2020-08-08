@@ -5,8 +5,9 @@ import (
 
 	"github.com/aquasecurity/trivy/pkg/log"
 
+	"github.com/Masterminds/semver/v3"
+
 	bundlerSrc "github.com/aquasecurity/trivy-db/pkg/vulnsrc/bundler"
-	"github.com/knqyf263/go-version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -46,16 +47,16 @@ func TestScanner_Detect(t *testing.T) {
 					PatchedVersions: []string{">= 1.9.26"},
 				},
 			}, nil)
-		s := Scanner{
+		s := Advisory{
 			vs: mockVulnSrc,
 		}
 
 		versionStr := "1.9.25-x64-mingw32"
 		versionStr = platformReplacer.Replace(versionStr)
 
-		v, _ := version.NewVersion(versionStr)
+		v, _ := semver.NewVersion(versionStr)
 
-		vulns, err := s.Detect("ffi", v)
+		vulns, err := s.DetectVulnerabilities("ffi", v)
 
 		assert.Nil(t, err)
 		assert.Equal(t, 1, len(vulns))

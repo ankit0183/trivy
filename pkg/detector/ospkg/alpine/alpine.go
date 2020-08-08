@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	version "github.com/knqyf263/go-deb-version"
+	version "github.com/knqyf263/go-apk-version"
 	"golang.org/x/xerrors"
 
 	ftypes "github.com/aquasecurity/fanal/types"
@@ -37,6 +37,7 @@ var (
 		"3.9":  time.Date(2020, 11, 1, 23, 59, 59, 0, time.UTC),
 		"3.10": time.Date(2021, 5, 1, 23, 59, 59, 0, time.UTC),
 		"3.11": time.Date(2021, 11, 1, 23, 59, 59, 0, time.UTC),
+		"3.12": time.Date(2022, 5, 1, 23, 59, 59, 0, time.UTC),
 	}
 )
 

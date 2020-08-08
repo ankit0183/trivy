@@ -6,19 +6,16 @@ import (
 	"testing"
 	"time"
 
-	deptypes "github.com/aquasecurity/go-dep-parser/pkg/types"
-
-	"github.com/golang/protobuf/ptypes/timestamp"
-
 	"github.com/golang/protobuf/ptypes"
-
 	google_protobuf "github.com/golang/protobuf/ptypes/empty"
+	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/xerrors"
 
 	"github.com/aquasecurity/fanal/cache"
 	ftypes "github.com/aquasecurity/fanal/types"
+	deptypes "github.com/aquasecurity/go-dep-parser/pkg/types"
 	dbTypes "github.com/aquasecurity/trivy-db/pkg/types"
 	"github.com/aquasecurity/trivy/pkg/report"
 	"github.com/aquasecurity/trivy/pkg/scanner"
@@ -30,8 +27,8 @@ import (
 )
 
 type mockCache struct {
-	cache.MockImageCache
-	cache.MockLocalImageCache
+	cache.MockArtifactCache
+	cache.MockLocalArtifactCache
 }
 
 func TestScanServer_Scan(t *testing.T) {
@@ -41,8 +38,8 @@ func TestScanServer_Scan(t *testing.T) {
 	tests := []struct {
 		name                string
 		args                args
-		scanExpectation     scanner.ScanExpectation
-		fillInfoExpectation vulnerability.FillInfoExpectation
+		scanExpectation     scanner.DriverScanExpectation
+		fillInfoExpectation vulnerability.OperationFillInfoExpectation
 		want                *rpcScanner.ScanResponse
 		wantErr             string
 	}{
@@ -50,19 +47,19 @@ func TestScanServer_Scan(t *testing.T) {
 			name: "happy path",
 			args: args{
 				in: &rpcScanner.ScanRequest{
-					Target:   "alpine:3.11",
-					ImageId:  "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					LayerIds: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
-					Options:  &rpcScanner.ScanOptions{},
+					Target:     "alpine:3.11",
+					ArtifactId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					BlobIds:    []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					Options:    &rpcScanner.ScanOptions{},
 				},
 			},
-			scanExpectation: scanner.ScanExpectation{
-				Args: scanner.ScanArgs{
+			scanExpectation: scanner.DriverScanExpectation{
+				Args: scanner.DriverScanArgs{
 					Target:   "alpine:3.11",
 					ImageID:  "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
 					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
-				Returns: scanner.ScanReturns{
+				Returns: scanner.DriverScanReturns{
 					Results: report.Results{
 						{
 							Target: "alpine:3.11 (alpine 3.11)",
@@ -85,8 +82,8 @@ func TestScanServer_Scan(t *testing.T) {
 					},
 				},
 			},
-			fillInfoExpectation: vulnerability.FillInfoExpectation{
-				Args: vulnerability.FillInfoArgs{
+			fillInfoExpectation: vulnerability.OperationFillInfoExpectation{
+				Args: vulnerability.OperationFillInfoArgs{
 					Vulns: []types.DetectedVulnerability{
 						{
 							VulnerabilityID:  "CVE-2019-0001",
@@ -117,6 +114,7 @@ func TestScanServer_Scan(t *testing.T) {
 								FixedVersion:     "1.2.4",
 								SeveritySource:   "nvd",
 								Layer:            &common.Layer{},
+								Cvss:             make(map[string]*common.CVSS),
 							},
 						},
 						Type: "alpine",
@@ -128,19 +126,19 @@ func TestScanServer_Scan(t *testing.T) {
 			name: "sad path: Scan returns an error",
 			args: args{
 				in: &rpcScanner.ScanRequest{
-					Target:   "alpine:3.11",
-					ImageId:  "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					LayerIds: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
-					Options:  &rpcScanner.ScanOptions{},
+					Target:     "alpine:3.11",
+					ArtifactId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					BlobIds:    []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					Options:    &rpcScanner.ScanOptions{},
 				},
 			},
-			scanExpectation: scanner.ScanExpectation{
-				Args: scanner.ScanArgs{
+			scanExpectation: scanner.DriverScanExpectation{
+				Args: scanner.DriverScanArgs{
 					Target:   "alpine:3.11",
 					ImageID:  "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
 					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
-				Returns: scanner.ScanReturns{
+				Returns: scanner.DriverScanReturns{
 					Err: errors.New("error"),
 				},
 			},
@@ -170,23 +168,23 @@ func TestScanServer_Scan(t *testing.T) {
 	}
 }
 
-func TestCacheServer_PutImage(t *testing.T) {
+func TestCacheServer_PutArtifact(t *testing.T) {
 	type args struct {
-		in *rpcCache.PutImageRequest
+		in *rpcCache.PutArtifactRequest
 	}
 	tests := []struct {
 		name     string
 		args     args
-		putImage cache.ImageCachePutImageExpectation
+		putImage cache.ArtifactCachePutArtifactExpectation
 		want     *google_protobuf.Empty
 		wantErr  string
 	}{
 		{
 			name: "happy path",
 			args: args{
-				in: &rpcCache.PutImageRequest{
-					ImageId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					ImageInfo: &rpcCache.ImageInfo{
+				in: &rpcCache.PutArtifactRequest{
+					ArtifactId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					ArtifactInfo: &rpcCache.ArtifactInfo{
 						SchemaVersion: 1,
 						Architecture:  "amd64",
 						Created: func() *timestamp.Timestamp {
@@ -199,10 +197,10 @@ func TestCacheServer_PutImage(t *testing.T) {
 					},
 				},
 			},
-			putImage: cache.ImageCachePutImageExpectation{
-				Args: cache.ImageCachePutImageArgs{
-					ImageID: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					ImageInfo: ftypes.ImageInfo{
+			putImage: cache.ArtifactCachePutArtifactExpectation{
+				Args: cache.ArtifactCachePutArtifactArgs{
+					ArtifactID: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					ArtifactInfo: ftypes.ArtifactInfo{
 						SchemaVersion: 1,
 						Architecture:  "amd64",
 						Created:       time.Date(2020, 1, 2, 3, 4, 5, 6, time.UTC),
@@ -216,9 +214,9 @@ func TestCacheServer_PutImage(t *testing.T) {
 		{
 			name: "sad path",
 			args: args{
-				in: &rpcCache.PutImageRequest{
-					ImageId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					ImageInfo: &rpcCache.ImageInfo{
+				in: &rpcCache.PutArtifactRequest{
+					ArtifactId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					ArtifactInfo: &rpcCache.ArtifactInfo{
 						SchemaVersion: 1,
 						Created: func() *timestamp.Timestamp {
 							d := time.Date(2020, 1, 2, 3, 4, 5, 6, time.UTC)
@@ -228,15 +226,15 @@ func TestCacheServer_PutImage(t *testing.T) {
 					},
 				},
 			},
-			putImage: cache.ImageCachePutImageExpectation{
-				Args: cache.ImageCachePutImageArgs{
-					ImageID: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					ImageInfo: ftypes.ImageInfo{
+			putImage: cache.ArtifactCachePutArtifactExpectation{
+				Args: cache.ArtifactCachePutArtifactArgs{
+					ArtifactID: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					ArtifactInfo: ftypes.ArtifactInfo{
 						SchemaVersion: 1,
 						Created:       time.Date(2020, 1, 2, 3, 4, 5, 6, time.UTC),
 					},
 				},
-				Returns: cache.ImageCachePutImageReturns{
+				Returns: cache.ArtifactCachePutArtifactReturns{
 					Err: xerrors.New("error"),
 				},
 			},
@@ -245,7 +243,7 @@ func TestCacheServer_PutImage(t *testing.T) {
 		{
 			name: "sad path: empty image info",
 			args: args{
-				in: &rpcCache.PutImageRequest{},
+				in: &rpcCache.PutArtifactRequest{},
 			},
 			wantErr: "empty image info",
 		},
@@ -253,10 +251,10 @@ func TestCacheServer_PutImage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockCache := new(mockCache)
-			mockCache.ApplyPutImageExpectation(tt.putImage)
+			mockCache.ApplyPutArtifactExpectation(tt.putImage)
 
 			s := NewCacheServer(mockCache)
-			got, err := s.PutImage(context.Background(), tt.args.in)
+			got, err := s.PutArtifact(context.Background(), tt.args.in)
 
 			if tt.wantErr != "" {
 				require.NotNil(t, err, tt.name)
@@ -271,23 +269,23 @@ func TestCacheServer_PutImage(t *testing.T) {
 	}
 }
 
-func TestCacheServer_PutLayer(t *testing.T) {
+func TestCacheServer_PutBlob(t *testing.T) {
 	type args struct {
-		in *rpcCache.PutLayerRequest
+		in *rpcCache.PutBlobRequest
 	}
 	tests := []struct {
 		name     string
 		args     args
-		putLayer cache.ImageCachePutLayerExpectation
+		putLayer cache.ArtifactCachePutBlobExpectation
 		want     *google_protobuf.Empty
 		wantErr  string
 	}{
 		{
 			name: "happy path",
 			args: args{
-				in: &rpcCache.PutLayerRequest{
+				in: &rpcCache.PutBlobRequest{
 					DiffId: "sha256:b2a1a2d80bf0c747a4f6b0ca6af5eef23f043fcdb1ed4f3a3e750aef2dc68079",
-					LayerInfo: &rpcCache.LayerInfo{
+					BlobInfo: &rpcCache.BlobInfo{
 						SchemaVersion: 1,
 						Digest:        "sha256:154ad0735c360b212b167f424d33a62305770a1fcfb6363882f5c436cfbd9812",
 						DiffId:        "sha256:b2a1a2d80bf0c747a4f6b0ca6af5eef23f043fcdb1ed4f3a3e750aef2dc68079",
@@ -345,10 +343,10 @@ func TestCacheServer_PutLayer(t *testing.T) {
 					},
 				},
 			},
-			putLayer: cache.ImageCachePutLayerExpectation{
-				Args: cache.ImageCachePutLayerArgs{
-					DiffID: "sha256:b2a1a2d80bf0c747a4f6b0ca6af5eef23f043fcdb1ed4f3a3e750aef2dc68079",
-					LayerInfo: ftypes.LayerInfo{
+			putLayer: cache.ArtifactCachePutBlobExpectation{
+				Args: cache.ArtifactCachePutBlobArgs{
+					BlobID: "sha256:b2a1a2d80bf0c747a4f6b0ca6af5eef23f043fcdb1ed4f3a3e750aef2dc68079",
+					BlobInfo: ftypes.BlobInfo{
 						SchemaVersion: 1,
 						Digest:        "sha256:154ad0735c360b212b167f424d33a62305770a1fcfb6363882f5c436cfbd9812",
 						DiffID:        "sha256:b2a1a2d80bf0c747a4f6b0ca6af5eef23f043fcdb1ed4f3a3e750aef2dc68079",
@@ -415,18 +413,18 @@ func TestCacheServer_PutLayer(t *testing.T) {
 		{
 			name: "sad path",
 			args: args{
-				in: &rpcCache.PutLayerRequest{
-					LayerInfo: &rpcCache.LayerInfo{
+				in: &rpcCache.PutBlobRequest{
+					BlobInfo: &rpcCache.BlobInfo{
 						SchemaVersion: 1,
 					},
 				},
 			},
-			putLayer: cache.ImageCachePutLayerExpectation{
-				Args: cache.ImageCachePutLayerArgs{
-					DiffIDAnything:    true,
-					LayerInfoAnything: true,
+			putLayer: cache.ArtifactCachePutBlobExpectation{
+				Args: cache.ArtifactCachePutBlobArgs{
+					BlobIDAnything:   true,
+					BlobInfoAnything: true,
 				},
-				Returns: cache.ImageCachePutLayerReturns{
+				Returns: cache.ArtifactCachePutBlobReturns{
 					Err: xerrors.New("error"),
 				},
 			},
@@ -435,14 +433,14 @@ func TestCacheServer_PutLayer(t *testing.T) {
 		{
 			name: "sad path: empty layer info",
 			args: args{
-				in: &rpcCache.PutLayerRequest{},
+				in: &rpcCache.PutBlobRequest{},
 			},
-			putLayer: cache.ImageCachePutLayerExpectation{
-				Args: cache.ImageCachePutLayerArgs{
-					DiffIDAnything:    true,
-					LayerInfoAnything: true,
+			putLayer: cache.ArtifactCachePutBlobExpectation{
+				Args: cache.ArtifactCachePutBlobArgs{
+					BlobIDAnything:   true,
+					BlobInfoAnything: true,
 				},
-				Returns: cache.ImageCachePutLayerReturns{
+				Returns: cache.ArtifactCachePutBlobReturns{
 					Err: xerrors.New("error"),
 				},
 			},
@@ -452,10 +450,10 @@ func TestCacheServer_PutLayer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockCache := new(mockCache)
-			mockCache.ApplyPutLayerExpectation(tt.putLayer)
+			mockCache.ApplyPutBlobExpectation(tt.putLayer)
 
 			s := NewCacheServer(mockCache)
-			got, err := s.PutLayer(context.Background(), tt.args.in)
+			got, err := s.PutBlob(context.Background(), tt.args.in)
 
 			if tt.wantErr != "" {
 				require.NotNil(t, err, tt.name)
@@ -470,127 +468,50 @@ func TestCacheServer_PutLayer(t *testing.T) {
 	}
 }
 
-func TestCacheServer_MissingLayers(t *testing.T) {
+func TestCacheServer_MissingBlobs(t *testing.T) {
 	type args struct {
 		ctx context.Context
-		in  *rpcCache.MissingLayersRequest
+		in  *rpcCache.MissingBlobsRequest
 	}
 	tests := []struct {
-		name                 string
-		args                 args
-		getLayerExpectations []cache.LocalImageCacheGetLayerExpectation
-		getImageExpectations []cache.LocalImageCacheGetImageExpectation
-		want                 *rpcCache.MissingLayersResponse
-		wantErr              string
+		name                                     string
+		args                                     args
+		getArtifactCacheMissingBlobsExpectations []cache.ArtifactCacheMissingBlobsExpectation
+		want                                     *rpcCache.MissingBlobsResponse
+		wantErr                                  string
 	}{
 		{
 			name: "happy path",
 			args: args{
-				in: &rpcCache.MissingLayersRequest{
-					ImageId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					LayerIds: []string{
+				in: &rpcCache.MissingBlobsRequest{
+					ArtifactId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					BlobIds: []string{
 						"sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 						"sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5",
 					},
 				},
 			},
-			getLayerExpectations: []cache.LocalImageCacheGetLayerExpectation{
+			getArtifactCacheMissingBlobsExpectations: []cache.ArtifactCacheMissingBlobsExpectation{
 				{
-					Args: cache.LocalImageCacheGetLayerArgs{
-						DiffID: "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
-					},
-					Returns: cache.LocalImageCacheGetLayerReturns{
-						LayerInfo: ftypes.LayerInfo{},
-					},
-				},
-				{
-					Args: cache.LocalImageCacheGetLayerArgs{
-						DiffID: "sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5",
-					},
-					Returns: cache.LocalImageCacheGetLayerReturns{
-						LayerInfo: ftypes.LayerInfo{
-							SchemaVersion: 1,
-						},
-					},
+					Args: cache.ArtifactCacheMissingBlobsArgs{ArtifactID: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+						BlobIDs: []string{"sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02", "sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5"}},
+					Returns: cache.ArtifactCacheMissingBlobsReturns{
+						MissingArtifact: false, MissingBlobIDs: []string{"sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5"}, Err: nil},
 				},
 			},
-			getImageExpectations: []cache.LocalImageCacheGetImageExpectation{
-				{
-					Args: cache.LocalImageCacheGetImageArgs{
-						ImageID: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					},
-					Returns: cache.LocalImageCacheGetImageReturns{
-						ImageInfo: ftypes.ImageInfo{
-							SchemaVersion: 1,
-						},
-					},
-				},
-			},
-			want: &rpcCache.MissingLayersResponse{
-				MissingImage:    false,
-				MissingLayerIds: []string{"sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02"},
-			},
-		},
-		{
-			name: "schema version doesn't match",
-			args: args{
-				in: &rpcCache.MissingLayersRequest{
-					ImageId: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					LayerIds: []string{
-						"sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
-						"sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5",
-					},
-				},
-			},
-			getLayerExpectations: []cache.LocalImageCacheGetLayerExpectation{
-				{
-					Args: cache.LocalImageCacheGetLayerArgs{
-						DiffID: "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
-					},
-					Returns: cache.LocalImageCacheGetLayerReturns{
-						LayerInfo: ftypes.LayerInfo{
-							SchemaVersion: 0,
-						},
-					},
-				},
-				{
-					Args: cache.LocalImageCacheGetLayerArgs{
-						DiffID: "sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5",
-					},
-					Returns: cache.LocalImageCacheGetLayerReturns{
-						LayerInfo: ftypes.LayerInfo{
-							SchemaVersion: -1,
-						},
-					},
-				},
-			},
-			getImageExpectations: []cache.LocalImageCacheGetImageExpectation{
-				{
-					Args: cache.LocalImageCacheGetImageArgs{
-						ImageID: "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					},
-					Returns: cache.LocalImageCacheGetImageReturns{
-						ImageInfo: ftypes.ImageInfo{},
-					},
-				},
-			},
-			want: &rpcCache.MissingLayersResponse{
-				MissingImage: true,
-				MissingLayerIds: []string{
-					"sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
-					"sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5",
-				},
+			want: &rpcCache.MissingBlobsResponse{
+				MissingArtifact: false,
+				MissingBlobIds:  []string{"sha256:dffd9992ca398466a663c87c92cfea2a2db0ae0cf33fcb99da60eec52addbfc5"},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockCache := new(mockCache)
-			mockCache.ApplyGetLayerExpectations(tt.getLayerExpectations)
-			mockCache.ApplyGetImageExpectations(tt.getImageExpectations)
+			mockCache.ApplyMissingBlobsExpectations(tt.getArtifactCacheMissingBlobsExpectations)
 
 			s := NewCacheServer(mockCache)
-			got, err := s.MissingLayers(tt.args.ctx, tt.args.in)
+			got, err := s.MissingBlobs(tt.args.ctx, tt.args.in)
 			if tt.wantErr != "" {
 				require.NotNil(t, err, tt.name)
 				assert.Contains(t, err.Error(), tt.wantErr, tt.name)
@@ -600,7 +521,7 @@ func TestCacheServer_MissingLayers(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.want, got)
-			mockCache.MockLocalImageCache.AssertExpectations(t)
+			mockCache.MockArtifactCache.AssertExpectations(t)
 		})
 	}
 }

@@ -8,11 +8,12 @@ import (
 
 	"github.com/google/wire"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/aquasecurity/trivy/pkg/log"
-	"github.com/knqyf263/go-version"
 
 	"golang.org/x/xerrors"
 
+	"github.com/aquasecurity/trivy/pkg/scanner/utils"
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
@@ -37,9 +38,9 @@ func NewDetector(factory Factory) Detector {
 
 func (d Detector) Detect(_, filePath string, _ time.Time, pkgs []ftypes.LibraryInfo) ([]types.DetectedVulnerability, error) {
 	log.Logger.Debugf("Detecting library vulnerabilities, path: %s", filePath)
-	driver := d.driverFactory.NewDriver(filepath.Base(filePath))
-	if driver == nil {
-		return nil, xerrors.New("unknown file type")
+	driver, err := d.driverFactory.NewDriver(filepath.Base(filePath))
+	if err != nil {
+		return nil, xerrors.Errorf("failed to new driver: %w", err)
 	}
 
 	vulns, err := detect(driver, pkgs)
@@ -54,7 +55,7 @@ func detect(driver Driver, libs []ftypes.LibraryInfo) ([]types.DetectedVulnerabi
 	log.Logger.Infof("Detecting %s vulnerabilities...", driver.Type())
 	var vulnerabilities []types.DetectedVulnerability
 	for _, lib := range libs {
-		v, err := version.NewVersion(lib.Library.Version)
+		v, err := semver.NewVersion(utils.FormatPatchVersion(lib.Library.Version))
 		if err != nil {
 			log.Logger.Debugf("invalid version, library: %s, version: %s, error: %s\n",
 				lib.Library.Name, lib.Library.Version, err)

@@ -3,6 +3,7 @@ package local
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/wire"
@@ -19,13 +20,15 @@ import (
 	_ "github.com/aquasecurity/fanal/analyzer/library/yarn"
 	_ "github.com/aquasecurity/fanal/analyzer/os/alpine"
 	_ "github.com/aquasecurity/fanal/analyzer/os/amazonlinux"
-	_ "github.com/aquasecurity/fanal/analyzer/os/debianbase"
+	_ "github.com/aquasecurity/fanal/analyzer/os/debian"
 	_ "github.com/aquasecurity/fanal/analyzer/os/photon"
 	_ "github.com/aquasecurity/fanal/analyzer/os/redhatbase"
 	_ "github.com/aquasecurity/fanal/analyzer/os/suse"
+	_ "github.com/aquasecurity/fanal/analyzer/os/ubuntu"
 	_ "github.com/aquasecurity/fanal/analyzer/pkg/apk"
 	_ "github.com/aquasecurity/fanal/analyzer/pkg/dpkg"
 	_ "github.com/aquasecurity/fanal/analyzer/pkg/rpmcmd"
+	"github.com/aquasecurity/fanal/applier"
 	ftypes "github.com/aquasecurity/fanal/types"
 	libDetector "github.com/aquasecurity/trivy/pkg/detector/library"
 	ospkgDetector "github.com/aquasecurity/trivy/pkg/detector/ospkg"
@@ -36,8 +39,8 @@ import (
 )
 
 var SuperSet = wire.NewSet(
-	analyzer.NewApplier,
-	wire.Bind(new(Applier), new(analyzer.Applier)),
+	applier.NewApplier,
+	wire.Bind(new(Applier), new(applier.Applier)),
 	ospkgDetector.SuperSet,
 	wire.Bind(new(OspkgDetector), new(ospkgDetector.Detector)),
 	libDetector.SuperSet,
@@ -46,7 +49,7 @@ var SuperSet = wire.NewSet(
 )
 
 type Applier interface {
-	ApplyLayers(imageID string, layerIDs []string) (detail ftypes.ImageDetail, err error)
+	ApplyLayers(artifactID string, blobIDs []string) (detail ftypes.ArtifactDetail, err error)
 }
 
 type OspkgDetector interface {
@@ -72,7 +75,7 @@ func (s Scanner) Scan(target string, imageID string, layerIDs []string, options 
 	if err != nil {
 		switch err {
 		case analyzer.ErrUnknownOS:
-			log.Logger.Warn("This OS is not supported and vulnerabilities in OS packages are not detected.")
+			log.Logger.Warn("OS is not detected and vulnerabilities in OS packages are not detected.")
 		case analyzer.ErrNoPkgsDetected:
 			log.Logger.Warn("No OS package is detected. Make sure you haven't deleted any files that contain information about the installed packages.")
 			log.Logger.Warn(`e.g. files under "/lib/apk/db/", "/var/lib/dpkg/" and "/var/lib/rpm"`)
@@ -96,12 +99,18 @@ func (s Scanner) Scan(target string, imageID string, layerIDs []string, options 
 			return nil, nil, false, xerrors.Errorf("failed to scan OS packages: %w", err)
 		}
 		if result != nil {
+			if options.ListAllPackages {
+				sort.Slice(pkgs, func(i, j int) bool {
+					return strings.Compare(pkgs[i].Name, pkgs[j].Name) <= 0
+				})
+				result.Packages = pkgs
+			}
 			results = append(results, *result)
 		}
 	}
 
 	if utils.StringInSlice("library", options.VulnType) {
-		libResults, err := s.scanLibrary(imageDetail.Applications)
+		libResults, err := s.scanLibrary(imageDetail.Applications, options.ListAllPackages)
 		if err != nil {
 			return nil, nil, false, xerrors.Errorf("failed to scan application libraries: %w", err)
 		}
@@ -131,19 +140,33 @@ func (s Scanner) scanOSPkg(target, osFamily, osName string, pkgs []ftypes.Packag
 	return result, eosl, nil
 }
 
-func (s Scanner) scanLibrary(apps []ftypes.Application) (report.Results, error) {
+func (s Scanner) scanLibrary(apps []ftypes.Application, listAllPackages bool) (report.Results, error) {
 	var results report.Results
 	for _, app := range apps {
 		vulns, err := s.libDetector.Detect("", app.FilePath, time.Time{}, app.Libraries)
 		if err != nil {
 			return nil, xerrors.Errorf("failed vulnerability detection of libraries: %w", err)
 		}
-
-		results = append(results, report.Result{
+		libReport := report.Result{
 			Target:          app.FilePath,
 			Vulnerabilities: vulns,
 			Type:            app.Type,
-		})
+		}
+		if listAllPackages {
+			var pkgs []ftypes.Package
+			for _, lib := range app.Libraries {
+				pkgs = append(pkgs, ftypes.Package{
+					Name:    lib.Library.Name,
+					Version: lib.Library.Version,
+					Layer:   lib.Layer,
+				})
+			}
+			sort.Slice(pkgs, func(i, j int) bool {
+				return strings.Compare(pkgs[i].Name, pkgs[j].Name) <= 0
+			})
+			libReport.Packages = pkgs
+		}
+		results = append(results, libReport)
 	}
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Target < results[j].Target

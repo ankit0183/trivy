@@ -4,6 +4,9 @@ import (
 	"context"
 	"os"
 
+	"github.com/urfave/cli/v2"
+	"golang.org/x/xerrors"
+
 	"github.com/aquasecurity/trivy/internal/client/config"
 	"github.com/aquasecurity/trivy/pkg/cache"
 	"github.com/aquasecurity/trivy/pkg/log"
@@ -12,8 +15,6 @@ import (
 	"github.com/aquasecurity/trivy/pkg/scanner"
 	"github.com/aquasecurity/trivy/pkg/types"
 	"github.com/aquasecurity/trivy/pkg/utils"
-	"github.com/urfave/cli"
-	"golang.org/x/xerrors"
 )
 
 func Run(cliCtx *cli.Context) error {
@@ -44,7 +45,8 @@ func run(c config.Config) (err error) {
 	}
 
 	var scanner scanner.Scanner
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), c.Timeout)
+	defer cancel()
 	remoteCache := cache.NewRemoteCache(cache.RemoteURL(c.RemoteAddr), c.CustomHeaders)
 
 	cleanup := func() {}
@@ -57,7 +59,7 @@ func run(c config.Config) (err error) {
 		}
 	} else {
 		// scan an image in Docker Engine or Docker Registry
-		scanner, cleanup, err = initializeDockerScanner(ctx, c.ImageName, remoteCache,
+		scanner, cleanup, err = initializeDockerScanner(ctx, c.Target, remoteCache,
 			client.CustomHeaders(c.CustomHeaders), client.RemoteURL(c.RemoteAddr), c.Timeout)
 		if err != nil {
 			return xerrors.Errorf("unable to initialize the docker scanner: %w", err)
@@ -71,18 +73,22 @@ func run(c config.Config) (err error) {
 	}
 	log.Logger.Debugf("Vulnerability type:  %s", scanOptions.VulnType)
 
-	results, err := scanner.ScanImage(scanOptions)
+	results, err := scanner.ScanArtifact(ctx, scanOptions)
 	if err != nil {
 		return xerrors.Errorf("error in image scan: %w", err)
 	}
 
 	vulnClient := initializeVulnerabilityClient()
 	for i := range results {
-		results[i].Vulnerabilities = vulnClient.Filter(results[i].Vulnerabilities,
-			c.Severities, c.IgnoreUnfixed, c.IgnoreFile)
+		vulns, err := vulnClient.Filter(ctx, results[i].Vulnerabilities,
+			c.Severities, c.IgnoreUnfixed, c.IgnoreFile, c.IgnorePolicy)
+		if err != nil {
+			return err
+		}
+		results[i].Vulnerabilities = vulns
 	}
 
-	if err = report.WriteResults(c.Format, c.Output, results, c.Template, false); err != nil {
+	if err = report.WriteResults(c.Format, c.Output, c.Severities, results, c.Template, false); err != nil {
 		return xerrors.Errorf("unable to write results: %w", err)
 	}
 

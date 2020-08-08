@@ -43,10 +43,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: &ftypes.OS{
 							Family: "alpine",
 							Name:   "3.11",
@@ -174,6 +174,184 @@ func TestScanner_Scan(t *testing.T) {
 			},
 		},
 		{
+			name: "happy path with list all packages",
+			args: args{
+				target:   "alpine:latest",
+				layerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+				options:  types.ScanOptions{VulnType: []string{"os", "library"}, ListAllPackages: true},
+			},
+			applyLayersExpectation: ApplierApplyLayersExpectation{
+				Args: ApplierApplyLayersArgs{
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+				},
+				Returns: ApplierApplyLayersReturns{
+					Detail: ftypes.ArtifactDetail{
+						OS: &ftypes.OS{
+							Family: "alpine",
+							Name:   "3.11",
+						},
+						Packages: []ftypes.Package{
+							{
+								Name:    "musl",
+								Version: "1.2.3",
+								Layer: ftypes.Layer{
+									DiffID: "sha256:ebf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+								},
+							},
+							{
+								Name:    "ausl",
+								Version: "1.2.3",
+								Layer: ftypes.Layer{
+									DiffID: "sha256:bbf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+								},
+							},
+						},
+						Applications: []ftypes.Application{
+							{
+								Type:     "bundler",
+								FilePath: "/app/Gemfile.lock",
+								Libraries: []ftypes.LibraryInfo{
+									{
+										Library: dtypes.Library{Name: "rails", Version: "6.0"},
+										Layer: ftypes.Layer{
+											DiffID: "sha256:0ea33a93585cf1917ba522b2304634c3073654062d5282c1346322967790ef33",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			ospkgDetectExpectations: []OspkgDetectorDetectExpectation{
+				{
+					Args: OspkgDetectorDetectArgs{
+						OsFamily: "alpine",
+						OsName:   "3.11",
+						Pkgs: []ftypes.Package{
+							{
+								Name:    "musl",
+								Version: "1.2.3",
+								Layer: ftypes.Layer{
+									DiffID: "sha256:ebf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+								},
+							},
+							{
+								Name:    "ausl",
+								Version: "1.2.3",
+								Layer: ftypes.Layer{
+									DiffID: "sha256:bbf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+								},
+							},
+						},
+					},
+					Returns: OspkgDetectorDetectReturns{
+						DetectedVulns: []types.DetectedVulnerability{
+							{
+								VulnerabilityID:  "CVE-2020-9999",
+								PkgName:          "musl",
+								InstalledVersion: "1.2.3",
+								FixedVersion:     "1.2.4",
+								Layer: ftypes.Layer{
+									DiffID: "sha256:ebf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+								},
+							},
+						},
+						Eosl: false,
+					},
+				},
+			},
+			libDetectExpectations: []LibraryDetectorDetectExpectation{
+				{
+					Args: LibraryDetectorDetectArgs{
+						FilePath: "/app/Gemfile.lock",
+						Pkgs: []ftypes.LibraryInfo{
+							{
+								Library: dtypes.Library{Name: "rails", Version: "6.0"},
+								Layer: ftypes.Layer{
+									DiffID: "sha256:0ea33a93585cf1917ba522b2304634c3073654062d5282c1346322967790ef33",
+								},
+							},
+						},
+					},
+					Returns: LibraryDetectorDetectReturns{
+						DetectedVulns: []types.DetectedVulnerability{
+							{
+								VulnerabilityID:  "CVE-2020-10000",
+								PkgName:          "rails",
+								InstalledVersion: "6.0",
+								FixedVersion:     "6.1",
+								Layer: ftypes.Layer{
+									DiffID: "sha256:0ea33a93585cf1917ba522b2304634c3073654062d5282c1346322967790ef33",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantResults: report.Results{
+				{
+					Target: "alpine:latest (alpine 3.11)",
+					Packages: []ftypes.Package{
+						{
+							Name:    "ausl",
+							Version: "1.2.3",
+							Layer: ftypes.Layer{
+								DiffID: "sha256:bbf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+							},
+						},
+						{
+							Name:    "musl",
+							Version: "1.2.3",
+							Layer: ftypes.Layer{
+								DiffID: "sha256:ebf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+							},
+						},
+					},
+					Vulnerabilities: []types.DetectedVulnerability{
+						{
+							VulnerabilityID:  "CVE-2020-9999",
+							PkgName:          "musl",
+							InstalledVersion: "1.2.3",
+							FixedVersion:     "1.2.4",
+							Layer: ftypes.Layer{
+								DiffID: "sha256:ebf12965380b39889c99a9c02e82ba465f887b45975b6e389d42e9e6a3857888",
+							},
+						},
+					},
+					Type: vulnerability.Alpine,
+				},
+				{
+					Target: "/app/Gemfile.lock",
+					Packages: []ftypes.Package{
+						{
+							Name:    "rails",
+							Version: "6.0",
+							Layer: ftypes.Layer{
+								DiffID: "sha256:0ea33a93585cf1917ba522b2304634c3073654062d5282c1346322967790ef33",
+							},
+						},
+					},
+					Vulnerabilities: []types.DetectedVulnerability{
+						{
+							VulnerabilityID:  "CVE-2020-10000",
+							PkgName:          "rails",
+							InstalledVersion: "6.0",
+							FixedVersion:     "6.1",
+							Layer: ftypes.Layer{
+								DiffID: "sha256:0ea33a93585cf1917ba522b2304634c3073654062d5282c1346322967790ef33",
+							},
+						},
+					},
+					Type: "bundler",
+				},
+			},
+			wantOS: &ftypes.OS{
+				Family: "alpine",
+				Name:   "3.11",
+			},
+		},
+		{
 			name: "happy path with empty os",
 			args: args{
 				target:   "alpine:latest",
@@ -182,10 +360,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: &ftypes.OS{},
 						Applications: []ftypes.Application{
 							{
@@ -260,10 +438,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: &ftypes.OS{
 							Family: "alpine",
 							Name:   "3.11",
@@ -360,10 +538,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: &ftypes.OS{
 							Family: "fedora",
 							Name:   "27",
@@ -455,10 +633,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:a6d503001157aedc826853f9b67f26d35966221b158bff03849868ae4a821116"},
+					BlobIDs: []string{"sha256:a6d503001157aedc826853f9b67f26d35966221b158bff03849868ae4a821116"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: nil,
 					},
 					Err: analyzer.ErrUnknownOS,
@@ -476,10 +654,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: &ftypes.OS{
 							Family: "alpine",
 							Name:   "3.11",
@@ -616,7 +794,7 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
 					Err: errors.New("error"),
@@ -633,10 +811,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: &ftypes.OS{
 							Family: "alpine",
 							Name:   "3.11",
@@ -684,10 +862,10 @@ func TestScanner_Scan(t *testing.T) {
 			},
 			applyLayersExpectation: ApplierApplyLayersExpectation{
 				Args: ApplierApplyLayersArgs{
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 				},
 				Returns: ApplierApplyLayersReturns{
-					Detail: ftypes.ImageDetail{
+					Detail: ftypes.ArtifactDetail{
 						OS: &ftypes.OS{
 							Family: "alpine",
 							Name:   "3.11",

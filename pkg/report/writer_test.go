@@ -122,7 +122,7 @@ func TestReportWriter_Table(t *testing.T) {
 				},
 			}
 			tableWritten := bytes.Buffer{}
-			assert.NoError(t, report.WriteResults("table", &tableWritten, inputResults, "", tc.light), tc.name)
+			assert.NoError(t, report.WriteResults("table", &tableWritten, nil, inputResults, "", tc.light), tc.name)
 			assert.Equal(t, tc.expectedOutput, tableWritten.String(), tc.name)
 		})
 	}
@@ -184,7 +184,7 @@ func TestReportWriter_JSON(t *testing.T) {
 				},
 			}
 
-			assert.NoError(t, report.WriteResults("json", &jsonWritten, inputResults, "", false), tc.name)
+			assert.NoError(t, report.WriteResults("json", &jsonWritten, nil, inputResults, "", false), tc.name)
 
 			writtenResults := report.Results{}
 			errJson := json.Unmarshal([]byte(jsonWritten.String()), &writtenResults)
@@ -230,18 +230,92 @@ func TestReportWriter_Template(t *testing.T) {
 			template: "{{ range . }}{{ range .Vulnerabilities}}{{ println .VulnerabilityID .Severity }}{{ end }}{{ end }}",
 			expected: "CVE-2019-0000 HIGH\nCVE-2019-0000 HIGH\nCVE-2019-0001 CRITICAL\n",
 		},
+		{
+			name: "happy path",
+			detectedVulns: []types.DetectedVulnerability{
+				{
+					VulnerabilityID:  "123",
+					PkgName:          "foo",
+					InstalledVersion: "1.2.3",
+					FixedVersion:     "3.4.5",
+					Vulnerability: dbTypes.Vulnerability{
+						Title:       `gcc: POWER9 "DARN" RNG intrinsic produces repeated output`,
+						Description: `curl version curl 7.20.0 to and including curl 7.59.0 contains a CWE-126: Buffer Over-read vulnerability in denial of service that can result in curl can be tricked into reading data beyond the end of a heap based buffer used to store downloaded RTSP content.. This vulnerability appears to have been fixed in curl < 7.20.0 and curl >= 7.60.0.`,
+						Severity:    "HIGH",
+					},
+				},
+			},
+
+			template: `<testsuites>
+{{- range . -}}
+{{- $failures := len .Vulnerabilities }}
+    <testsuite tests="1" failures="{{ $failures }}" time="" name="{{  .Target }}">
+	{{- if not (eq .Type "") }}
+        <properties>
+            <property name="type" value="{{ .Type }}"></property>
+        </properties>
+        {{- end -}}
+        {{ range .Vulnerabilities }}
+        <testcase classname="{{ .PkgName }}-{{ .InstalledVersion }}" name="[{{ .Vulnerability.Severity }}] {{ .VulnerabilityID }}" time="">
+            <failure message={{escapeXML .Title | printf "%q" }} type="description">{{escapeXML .Description | printf "%q" }}</failure>
+        </testcase>
+    {{- end }}
+	</testsuite>
+{{- end }}
+</testsuites>`,
+
+			expected: `<testsuites>
+    <testsuite tests="1" failures="1" time="" name="foojunit">
+        <properties>
+            <property name="type" value="test"></property>
+        </properties>
+        <testcase classname="foo-1.2.3" name="[HIGH] 123" time="">
+            <failure message="gcc: POWER9 &#34;DARN&#34; RNG intrinsic produces repeated output" type="description">"curl version curl 7.20.0 to and including curl 7.59.0 contains a CWE-126: Buffer Over-read vulnerability in denial of service that can result in curl can be tricked into reading data beyond the end of a heap based buffer used to store downloaded RTSP content.. This vulnerability appears to have been fixed in curl &lt; 7.20.0 and curl &gt;= 7.60.0."</failure>
+        </testcase>
+	</testsuite>
+</testsuites>`,
+		},
+		{
+			name: "happy path with/without period description should return with period",
+			detectedVulns: []types.DetectedVulnerability{
+				{
+					VulnerabilityID: "CVE-2019-0000",
+					PkgName:         "foo",
+					Vulnerability: dbTypes.Vulnerability{
+						Description: "without period",
+					},
+				},
+				{
+					VulnerabilityID: "CVE-2019-0000",
+					PkgName:         "bar",
+					Vulnerability: dbTypes.Vulnerability{
+						Description: "with period.",
+					},
+				},
+				{
+					VulnerabilityID: "CVE-2019-0000",
+					PkgName:         "bar",
+					Vulnerability: dbTypes.Vulnerability{
+						Description: `with period and unescaped string curl: Use-after-free when closing 'easy' handle in Curl_close().`,
+					},
+				},
+			},
+			template: `{{ range . }}{{ range .Vulnerabilities}}{{.VulnerabilityID}} {{ endWithPeriod (escapeString .Description) | printf "%q" }}{{ end }}{{ end }}`,
+			expected: `CVE-2019-0000 "without period."CVE-2019-0000 "with period."CVE-2019-0000 "with period and unescaped string curl: Use-after-free when closing &#39;easy&#39; handle in Curl_close()."`,
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			tmplWritten := bytes.Buffer{}
 			inputResults := report.Results{
 				{
-					Target:          "foojson",
+					Target:          "foojunit",
+					Type:            "test",
 					Vulnerabilities: tc.detectedVulns,
 				},
 			}
 
-			assert.NoError(t, report.WriteResults("template", &tmplWritten, inputResults, tc.template, false))
+			assert.NoError(t, report.WriteResults("template", &tmplWritten, nil, inputResults, tc.template, false))
 			assert.Equal(t, tc.expected, tmplWritten.String())
 		})
 	}

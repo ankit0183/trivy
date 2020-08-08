@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 
 	"github.com/aquasecurity/trivy/internal"
 )
@@ -84,6 +84,16 @@ func TestClientServer(t *testing.T) {
 				Input:        "testdata/fixtures/alpine-310.tar.gz",
 			},
 			golden: "testdata/alpine-310.gitlab.golden",
+		},
+		{
+			name: "alpine 3.10 integration with sarif template",
+			testArgs: args{
+				Format:       "template",
+				TemplatePath: "@../contrib/sarif.tpl",
+				Version:      "dev",
+				Input:        "testdata/fixtures/alpine-310.tar.gz",
+			},
+			golden: "testdata/alpine-310.sarif.golden",
 		},
 		{
 			name: "alpine 3.9 integration",
